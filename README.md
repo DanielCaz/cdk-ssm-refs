@@ -9,7 +9,7 @@ prefix.
 ## Install
 
 ```bash
-bun add @danielcaz/cdk-ssm-refs
+bun add cdk-ssm-refs
 ```
 
 `aws-cdk-lib`, `constructs`, and `typescript` are peer dependencies, so your CDK app
@@ -18,7 +18,7 @@ supplies them.
 ## Usage
 
 ```ts
-import { defineParamRegistry } from '@danielcaz/cdk-ssm-refs';
+import { defineParamRegistry } from 'cdk-ssm-refs';
 
 export const params = defineParamRegistry({
   prefix: '/team/my-app', // must start with '/'; trailing slashes are ignored
