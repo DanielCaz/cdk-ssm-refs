@@ -9,12 +9,12 @@
         "aws-cdk-lib": "^2.271.0",
         "constructs": "^10.8.1",
         "prettier": "^3.9.9",
-        "typescript": "^5.9.3",
         "vitest": "^5.0.2",
       },
       "peerDependencies": {
         "aws-cdk-lib": "^2.271.0",
         "constructs": "^10.8.1",
+        "typescript": "^5.9.3",
       },
     },
   },

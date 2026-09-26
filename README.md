@@ -50,6 +50,26 @@ params.putParameter(this, 'SubnetIdsParam', 'subnetIds', subnetIds.join(','), {
 });
 ```
 
+`putParameter` returns the `StringParameter` it creates, so you can keep working with the
+construct. To pin one, call `applyRemovalPolicy(RemovalPolicy.RETAIN)` on the return value,
+importing `RemovalPolicy` from `aws-cdk-lib/core`.
+
+### Emitting stack outputs
+
+```ts
+const params = defineParamRegistry({
+  prefix: '/team/my-app',
+  parameters: { vpcId: 'vpc-id' },
+  emitOutputs: true,
+});
+
+params.putParameter(this, 'VpcIdParam', 'vpcId', vpc.vpcId);
+// Also creates a CfnOutput from the construct id 'VpcIdParam-output'
+```
+
+With `emitOutputs` enabled every `putParameter` call additionally emits a `CfnOutput` whose
+value is the raw parameter value. See the caveats below before turning this on.
+
 ### Reading parameters from another stack
 
 ```ts
@@ -78,6 +98,7 @@ const secret = params.createSecret(this, 'DbPassword', 'dbPassword', {
 
 ```ts
 import { Stack } from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 const role = new iam.Role(this, 'Reader', {
   assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
@@ -95,22 +116,26 @@ The ARN patterns are also exposed on their own via `parameterArnPattern(stack)` 
 
 ## API
 
-| Member                                        | Description                                                      |
-| --------------------------------------------- | ---------------------------------------------------------------- |
-| `defineParamRegistry(config)`                 | Creates a `ParamRegistry`.                                       |
-| `config.prefix`                               | Path prefix. Must start with `/`; trailing slashes ignored.      |
-| `config.parameters`                           | Key to path-segment map for SSM parameters.                      |
-| `config.secrets`                              | Key to path-segment map for Secrets Manager secrets. Optional.   |
-| `config.emitOutputs`                          | Emit a `CfnOutput` per `putParameter` call. Defaults to `false`. |
-| `parameterName(key)`                          | Fully qualified parameter name, e.g. `/team/my-app/vpc-id`.      |
-| `putParameter(scope, id, key, value, props?)` | Creates a `StringParameter`.                                     |
-| `parameterRef(key, options?)`                 | `{{resolve:ssm:...}}` dynamic reference.                         |
-| `secureParameterRef(key, options?)`           | `{{resolve:ssm-secure:...}}` dynamic reference.                  |
-| `createSecret(scope, id, key, props?)`        | Creates a `Secret`.                                              |
-| `parameterArnPattern(stack)`                  | ARN pattern for every parameter under the prefix.                |
-| `secretArnPattern(stack)`                     | ARN pattern for every secret under the prefix.                   |
-| `readPolicyStatements(stack)`                 | Read-only IAM statements for both patterns.                      |
-| `normalizePrefix(prefix)`                     | Low-level prefix normalizer used by the constructor.             |
+| Member                                                            | Description                                                      |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `defineParamRegistry(config)`                                     | Creates a `ParamRegistry`.                                       |
+| `ParamRegistry`                                                   | The class itself, if you need it as a type.                      |
+| `config.prefix`                                                   | Path prefix. Must start with `/`; trailing slashes ignored.      |
+| `config.parameters`                                               | Key to path-segment map for SSM parameters.                      |
+| `config.secrets`                                                  | Key to path-segment map for Secrets Manager secrets. Optional.   |
+| `config.emitOutputs`                                              | Emit a `CfnOutput` per `putParameter` call. Defaults to `false`. |
+| `parameterName(key)` → `string`                                   | Fully qualified parameter name, e.g. `/team/my-app/vpc-id`.      |
+| `putParameter(scope, id, key, value, props?)` → `StringParameter` | Creates a `StringParameter`.                                     |
+| `parameterRef(key, options?)` → `string`                          | `{{resolve:ssm:...}}` dynamic reference.                         |
+| `secureParameterRef(key, options?)` → `string`                    | `{{resolve:ssm-secure:...}}` dynamic reference.                  |
+| `createSecret(scope, id, key, props?)` → `Secret`                 | Creates a `Secret`.                                              |
+| `parameterArnPattern(stack)` → `string`                           | ARN pattern for every parameter under the prefix.                |
+| `secretArnPattern(stack)` → `string`                              | ARN pattern for every secret under the prefix.                   |
+| `readPolicyStatements(stack)` → `PolicyStatement[]`               | Read-only IAM statements for both patterns.                      |
+| `normalizePrefix(prefix)` → `{ withSlash, withoutSlash }`         | Low-level prefix normalizer used by the constructor.             |
+
+`ParamRegistryConfig` and `DynamicRefOptions` are also exported as types, for annotating
+your own helpers.
 
 ## Caveats
 
@@ -123,6 +148,12 @@ The ARN patterns are also exposed on their own via `parameterArnPattern(stack)` 
 - **References are not version-pinned by default.** `parameterRef('vpcId')` resolves
   whatever version is current at deploy time and will not report drift when the value
   changes. Pass `{ version }` if you want that.
+- **`version` must be an integer from 1 to 100.** CloudFormation accepts no other
+  parameter versions, so `parameterRef('vpcId', { version: 0 })` throws.
+- **`emitOutputs` writes the value into the template.** Each `CfnOutput` carries the raw
+  parameter value, which anyone who can read the stack can see, so leave it off for
+  sensitive values. CloudFormation logical ids cannot contain `-`, so CDK strips it during
+  synthesis and the `'VpcIdParam-output'` construct id is deployed as `VpcIdParamoutput`.
 - **`secureParameterRef` requires a `SecureString` parameter.** Plain `String`
   parameters cannot be read through `ssm-secure`.
 - **Secret names get a random suffix.** CloudFormation appends six characters to every
@@ -136,9 +167,8 @@ The ARN patterns are also exposed on their own via `parameterArnPattern(stack)` 
 - **ARN patterns are pinned to the `aws` partition.** `parameterArnPattern` and
   `secretArnPattern` return `arn:aws:...` strings built from the stack's region and account,
   with no partition lookup, feature flag or partition pseudo parameter involved, so for a
-  stack with an explicit environment they are plain strings that are easy to assert on. A
-  GovCloud or China deployment would need the partition parameterized again.
-- **ESM only.** The package is published as ESM and requires Node >= 20.19.0, which is the
+  stack with an explicit environment they are plain strings that are easy to assert on.
+- **ESM only.** The package ships ESM and requires Node >= 20.19.0, which is the
   first release where `require(esm)` works without a flag.
 
 ## Development
