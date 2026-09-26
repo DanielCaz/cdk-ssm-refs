@@ -1,0 +1,40 @@
+{
+  "name": "@danielcaz/cdk-ssm-refs",
+  "version": "0.1.0",
+  "description": "Typed registry for SSM parameters and Secrets Manager secrets in AWS CDK.",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target node --format esm --packages external && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepack": "bun run build"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "@types/bun": "latest",
+    "aws-cdk-lib": "^2.271.0",
+    "constructs": "^10.8.1",
+    "prettier": "^3.9.9",
+    "vitest": "^5.0.2"
+  },
+  "peerDependencies": {
+    "typescript": "^7",
+    "aws-cdk-lib": "^2.271.0",
+    "constructs": "^10.8.1"
+  }
+}
