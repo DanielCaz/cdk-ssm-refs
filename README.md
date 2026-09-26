@@ -179,3 +179,11 @@ bun run test
 bun run typecheck
 bun run build
 ```
+
+# License
+
+MIT License
+
+# Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request on GitHub. Make sure to follow the existing code style and include tests for any new functionality.
