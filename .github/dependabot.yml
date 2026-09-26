@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    assignees:
+      - DanielCaz
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+      major:
+        applies-to: version-updates
+        update-types:
+          - major
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    assignees:
+      - DanielCaz
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+      major:
+        applies-to: version-updates
+        update-types:
+          - major
