@@ -1,12 +1,16 @@
 version: 2
 
 updates:
-  - package-ecosystem: "bun"
-    directory: "/"
+  - package-ecosystem: 'bun'
+    directory: '/'
     schedule:
-      interval: "weekly"
+      interval: 'weekly'
     assignees:
       - DanielCaz
+    # Conventional Commit titles: "chore(deps): ..." / "chore(deps-dev): ..."
+    commit-message:
+      prefix: 'chore'
+      include: 'scope'
     groups:
       minor-and-patch:
         applies-to: version-updates
@@ -18,12 +22,15 @@ updates:
         update-types:
           - major
 
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: 'github-actions'
+    directory: '/'
     schedule:
-      interval: "weekly"
+      interval: 'weekly'
     assignees:
       - DanielCaz
+    commit-message:
+      prefix: 'ci'
+      include: 'scope'
     groups:
       minor-and-patch:
         applies-to: version-updates

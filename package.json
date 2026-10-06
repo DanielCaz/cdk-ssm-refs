@@ -2,15 +2,39 @@
   "name": "cdk-ssm-refs",
   "version": "0.1.1",
   "description": "Typed registry for SSM parameters and Secrets Manager secrets in AWS CDK.",
+  "keywords": [
+    "aws",
+    "aws-cdk",
+    "cdk",
+    "cloudformation",
+    "ssm",
+    "parameter-store",
+    "secrets-manager",
+    "typescript"
+  ],
+  "homepage": "https://github.com/DanielCaz/cdk-ssm-refs#readme",
+  "bugs": {
+    "url": "https://github.com/DanielCaz/cdk-ssm-refs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DanielCaz/cdk-ssm-refs.git"
+  },
+  "license": "MIT",
+  "author": "Daniel Cazarez (https://github.com/DanielCaz)",
   "type": "module",
   "sideEffects": false,
   "engines": {
     "node": ">=20.19.0"
   },
   "scripts": {
+    "prebuild": "rm -rf dist",
     "build": "bun build ./src/index.ts --outdir ./dist --target node --format esm --packages external && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:package": "publint && attw --pack . --profile esm-only",
     "prepack": "bun run build"
   },
   "main": "./dist/index.js",
@@ -25,16 +49,27 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "devDependencies": {
-    "@types/bun": "latest",
-    "aws-cdk-lib": "^2.271.0",
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@types/bun": "^1.4.2",
+    "aws-cdk-lib": "^2.272.0",
     "constructs": "^10.8.1",
     "prettier": "^3.9.9",
-    "vitest": "^5.0.2"
+    "publint": "^0.3.25",
+    "vitest": "^5.0.3"
   },
   "peerDependencies": {
-    "typescript": "^5.9.3",
-    "aws-cdk-lib": "^2.271.0",
-    "constructs": "^10.8.1"
+    "aws-cdk-lib": "^2.73.0",
+    "constructs": "^10.0.0",
+    "typescript": "^5.6.1-rc"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
   }
 }

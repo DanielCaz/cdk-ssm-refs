@@ -1,5 +1,10 @@
 # cdk-ssm-refs
 
+[![npm version](https://img.shields.io/npm/v/cdk-ssm-refs)](https://www.npmjs.com/package/cdk-ssm-refs)
+[![CI](https://github.com/DanielCaz/cdk-ssm-refs/actions/workflows/validate-pr.yml/badge.svg?branch=main)](https://github.com/DanielCaz/cdk-ssm-refs/actions/workflows/validate-pr.yml)
+[![license](https://img.shields.io/github/license/DanielCaz/cdk-ssm-refs)](./LICENSE)
+[![node](https://img.shields.io/node/v/cdk-ssm-refs)](https://nodejs.org)
+
 Typed registry for AWS Systems Manager parameters and Secrets Manager secrets in AWS CDK.
 
 Declare your parameters and secrets once, and get a consistent path prefix, compile-time
@@ -9,11 +14,14 @@ prefix.
 ## Install
 
 ```bash
-bun add cdk-ssm-refs
+npm install cdk-ssm-refs
+# or: pnpm add cdk-ssm-refs / yarn add cdk-ssm-refs / bun add cdk-ssm-refs
 ```
 
-`aws-cdk-lib`, `constructs`, and `typescript` are peer dependencies, so your CDK app
-supplies them.
+`aws-cdk-lib` (`^2.73.0`) and `constructs` (`^10.0.0`) are peer dependencies, so your CDK
+app supplies them. CI runs the test suite against both the oldest and the newest versions
+those ranges allow. `typescript` (`^5.9.3`) is an optional peer dependency; the package
+ships its own type declarations.
 
 ## Usage
 
@@ -177,13 +185,25 @@ your own helpers.
 bun install
 bun run test
 bun run typecheck
+bun run format:check
 bun run build
+bun run check:package
 ```
 
-# License
+## Versioning and releases
 
-MIT License
+This project follows [Semantic Versioning](https://semver.org). While the version is `0.x`,
+breaking changes bump the minor version. Releases are automated with
+[release-please](https://github.com/googleapis/release-please) from
+[Conventional Commits](https://www.conventionalcommits.org), and every release is published
+to npm with provenance. See the [changelog](./CHANGELOG.md) and the
+[GitHub releases](https://github.com/DanielCaz/cdk-ssm-refs/releases) for what changed.
 
-# Contributing
+## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request on GitHub. Make sure to follow the existing code style and include tests for any new functionality.
+Contributions are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) first. To report
+a vulnerability, see [SECURITY.md](./SECURITY.md).
+
+## License
+
+[MIT](./LICENSE)
