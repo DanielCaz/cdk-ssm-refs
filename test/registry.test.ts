@@ -114,6 +114,51 @@ describe('ParamRegistry', () => {
     expect(registry().parameterName('vpcId')).toBe('/team/my-app/vpc-id');
   });
 
+  it('normalizes trailing prefix slashes before joining a parameter path', () => {
+    const registryWithTrailingSlash = defineParamRegistry({
+      prefix: '/team/my-app//',
+      parameters: { vpcId: 'vpc-id' },
+    });
+
+    expect(registryWithTrailingSlash.parameterName('vpcId')).toBe(
+      '/team/my-app/vpc-id',
+    );
+  });
+
+  it('normalizes a leading slash in the parameter path', () => {
+    const registryWithLeadingSlash = defineParamRegistry({
+      prefix: '/team/my-app',
+      parameters: { vpcId: '/vpc-id' },
+    });
+
+    expect(registryWithLeadingSlash.parameterName('vpcId')).toBe(
+      '/team/my-app/vpc-id',
+    );
+  });
+
+  it('normalizes repeated slashes within a parameter path', () => {
+    const registryWithRepeatedSlash = defineParamRegistry({
+      prefix: '/team/my-app',
+      parameters: { vpcId: 'network//vpc-id' },
+    });
+
+    expect(registryWithRepeatedSlash.parameterName('vpcId')).toBe(
+      '/team/my-app/network/vpc-id',
+    );
+  });
+
+  it('uses the current parameter path value from the mapping', () => {
+    const parameters = { vpcId: 'vpc-id' };
+    const mutableRegistry = defineParamRegistry({
+      prefix: '/team/my-app',
+      parameters,
+    });
+
+    parameters.vpcId = '/vpc-id';
+
+    expect(mutableRegistry.parameterName('vpcId')).toBe('/team/my-app/vpc-id');
+  });
+
   it('produces a matching parameter dynamic ref', () => {
     expect(registry().parameterRef('vpcId')).toBe(
       '{{resolve:ssm:/team/my-app/vpc-id}}',
