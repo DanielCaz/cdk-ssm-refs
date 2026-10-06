@@ -1,9 +1,19 @@
-name: Validate PR
+name: CI
 
 on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
   validate:
@@ -17,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Check formatting
+        run: bun run format:check
+
       - name: Run type check
         run: bun run typecheck
 
@@ -25,3 +38,96 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Validate package metadata and types
+        run: bun run check:package
+
+  # The peer dependency ranges in package.json are a promise to consumers, so
+  # test both ends of them: the oldest versions that are known to work, and the
+  # newest versions that satisfy the ranges.
+  cdk-compat:
+    name: cdk-compat (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: oldest
+            cdk: '2.73.0'
+            constructs: '10.0.0'
+          - name: newest
+            cdk: '^2'
+            constructs: '^10'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install ${{ matrix.name }} aws-cdk-lib and constructs
+        run: bun add --no-save aws-cdk-lib@${{ matrix.cdk }} constructs@${{ matrix.constructs }}
+
+      - name: Show resolved versions
+        run: node -p "'aws-cdk-lib ' + require('aws-cdk-lib/package.json').version + ', constructs ' + require('constructs/package.json').version"
+
+      - name: Run type check
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun run test
+
+  # Pack the real tarball, install it into a clean project, and load it the way
+  # a consumer would, on every Node version the package claims to support.
+  package:
+    name: package (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.19.0', '22', '24']
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pack
+        run: npm pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Install tarball into a clean project and load it
+        run: |
+          mkdir "$RUNNER_TEMP/smoke"
+          cd "$RUNNER_TEMP/smoke"
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP"/cdk-ssm-refs-*.tgz aws-cdk-lib constructs
+          cat > check.mjs <<'EOF'
+          import { defineParamRegistry } from 'cdk-ssm-refs';
+
+          const registry = defineParamRegistry({
+            prefix: '/smoke',
+            parameters: { example: 'example' },
+          });
+
+          if (registry.parameterName('example') !== '/smoke/example') {
+            throw new Error('unexpected parameter name from ESM import');
+          }
+          console.log('ESM import ok');
+          EOF
+          node check.mjs
+          node -e "
+            const { defineParamRegistry } = require('cdk-ssm-refs');
+            const registry = defineParamRegistry({ prefix: '/smoke', parameters: { example: 'example' } });
+            if (registry.parameterName('example') !== '/smoke/example') throw new Error('unexpected parameter name from require()');
+            console.log('require(esm) ok');
+          "
