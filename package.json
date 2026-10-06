@@ -1,6 +1,6 @@
 {
   "name": "cdk-ssm-refs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Typed registry for SSM parameters and Secrets Manager secrets in AWS CDK.",
   "type": "module",
   "sideEffects": false,
