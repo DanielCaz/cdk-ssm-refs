@@ -36,7 +36,15 @@ export class ParamRegistry<
       throw new Error(`[cdk-ssm-refs] unknown parameter key: ${String(key)}`);
     }
 
-    return `${this.parameterPath}/${segment}`;
+    const normalizedSegment = segment.split('/').filter(Boolean).join('/');
+
+    if (normalizedSegment.length === 0) {
+      throw new Error(
+        `[cdk-ssm-refs] parameter path for key ${String(key)} must contain at least one path segment`,
+      );
+    }
+
+    return `${this.parameterPath}/${normalizedSegment}`;
   }
 
   /**
