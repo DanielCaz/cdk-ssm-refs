@@ -43,6 +43,10 @@ export const params = defineParamRegistry({
 The keys of `parameters` and `secrets` are the only values accepted by the `key` argument
 of every method, so an unknown key is a compile error.
 
+Each value is the path under the prefix. It may be nested (`'network/vpc-id'`), and leading,
+trailing and repeated slashes are ignored. A value with no path segment at all (`''` or
+`'/'`) throws as soon as the registry is defined.
+
 ### Writing parameters
 
 ```ts
@@ -58,8 +62,8 @@ params.putParameter(this, 'SubnetIdsParam', 'subnetIds', subnetIds.join(','), {
 });
 ```
 
-`putParameter` returns the `StringParameter` it creates, so you can keep working with the
-construct. To pin one, call `applyRemovalPolicy(RemovalPolicy.RETAIN)` on the return value,
+The `id` is used as the construct id as given. `putParameter` returns the
+`StringParameter` it creates, so you can keep working with the construct. To pin one, call `applyRemovalPolicy(RemovalPolicy.RETAIN)` on the return value,
 importing `RemovalPolicy` from `aws-cdk-lib/core`.
 
 ### Emitting stack outputs
@@ -72,7 +76,7 @@ const params = defineParamRegistry({
 });
 
 params.putParameter(this, 'VpcIdParam', 'vpcId', vpc.vpcId);
-// Also creates a CfnOutput from the construct id 'VpcIdParam-output'
+// Also creates a CfnOutput from the construct id 'VpcIdParamOutput'
 ```
 
 With `emitOutputs` enabled every `putParameter` call additionally emits a `CfnOutput` whose
@@ -102,24 +106,51 @@ const secret = params.createSecret(this, 'DbPassword', 'dbPassword', {
 // Use secret.secretValue directly within the creating stack
 ```
 
+The secret is created with the exact name `/team/my-app/db-password`, so other stacks can
+find it by name:
+
+```ts
+import * as rds from 'aws-cdk-lib/aws-rds';
+
+// A SecretValue holding '{{resolve:secretsmanager:/team/my-app/db-password}}'.
+// Secret-aware constructs accept it directly.
+const password = params.secretRef('dbPassword');
+rds.Credentials.fromPassword('admin', password);
+
+// One field of a JSON secret, or a specific version
+params.secretRef('dbPassword', { jsonField: 'password' });
+params.secretRef('dbPassword', { versionStage: 'AWSPREVIOUS' });
+
+// An ISecret, for grantRead() and constructs that want a secret object
+const imported = params.importSecret(this, 'ImportedDbPassword', 'dbPassword');
+imported.grantRead(role);
+```
+
+`secretRef` and `importSecret` need the secret to exist in the target account and region
+before the stack that uses them is deployed.
+
 ### IAM read policies
 
 ```ts
-import { Stack } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 
 const role = new iam.Role(this, 'Reader', {
   assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
 });
 
-// ssm:GetParameter(s) plus secretsmanager:GetSecretValue, both scoped
-// to the registry prefix in the region and account of the stack.
-for (const statement of params.readPolicyStatements(Stack.of(this))) {
-  role.addToPolicy(statement);
-}
+// ssm:GetParameter(s) on the registry prefix, plus
+// secretsmanager:GetSecretValue when the registry declares secrets.
+params.grantRead(role);
+
+// Works on anything grantable, such as a Lambda function
+params.grantRead(fn);
 ```
 
-The ARN patterns are also exposed on their own via `parameterArnPattern(stack)` and
+`grantRead(grantee)` uses the partition, region and account of the stack that contains the
+grantee. If the grantee is not a construct, pass the stack as the second argument.
+
+If you need the statements themselves, `readPolicyStatements(stack)` returns them, and the
+ARN patterns are also exposed on their own via `parameterArnPattern(stack)` and
 `secretArnPattern(stack)` if you need to build a different policy.
 
 ## API
@@ -133,17 +164,21 @@ The ARN patterns are also exposed on their own via `parameterArnPattern(stack)` 
 | `config.secrets`                                                  | Key to path-segment map for Secrets Manager secrets. Optional.   |
 | `config.emitOutputs`                                              | Emit a `CfnOutput` per `putParameter` call. Defaults to `false`. |
 | `parameterName(key)` → `string`                                   | Fully qualified parameter name, e.g. `/team/my-app/vpc-id`.      |
+| `secretName(key)` → `string`                                      | Fully qualified secret name, e.g. `/team/my-app/db-password`.    |
 | `putParameter(scope, id, key, value, props?)` → `StringParameter` | Creates a `StringParameter`.                                     |
 | `parameterRef(key, options?)` → `string`                          | `{{resolve:ssm:...}}` dynamic reference.                         |
 | `secureParameterRef(key, options?)` → `string`                    | `{{resolve:ssm-secure:...}}` dynamic reference.                  |
 | `createSecret(scope, id, key, props?)` → `Secret`                 | Creates a `Secret`.                                              |
+| `secretRef(key, options?)` → `SecretValue`                        | `{{resolve:secretsmanager:...}}` dynamic reference.              |
+| `importSecret(scope, id, key)` → `ISecret`                        | Imports the secret by name.                                      |
 | `parameterArnPattern(stack)` → `string`                           | ARN pattern for every parameter under the prefix.                |
 | `secretArnPattern(stack)` → `string`                              | ARN pattern for every secret under the prefix.                   |
-| `readPolicyStatements(stack)` → `PolicyStatement[]`               | Read-only IAM statements for both patterns.                      |
+| `readPolicyStatements(stack)` → `PolicyStatement[]`               | Read-only IAM statements for the registry.                       |
+| `grantRead(grantee, stack?)` → `Grant`                            | Grants those read-only statements to `grantee`.                  |
 | `normalizePrefix(prefix)` → `{ withSlash, withoutSlash }`         | Low-level prefix normalizer used by the constructor.             |
 
-`ParamRegistryConfig` and `DynamicRefOptions` are also exported as types, for annotating
-your own helpers.
+`ParamRegistryConfig`, `DynamicRefOptions` and `SecretRefOptions` are also exported as types,
+for annotating your own helpers.
 
 ## Caveats
 
@@ -156,28 +191,53 @@ your own helpers.
 - **References are not version-pinned by default.** `parameterRef('vpcId')` resolves
   whatever version is current at deploy time and will not report drift when the value
   changes. Pass `{ version }` if you want that.
-- **`version` must be an integer from 1 to 100.** CloudFormation accepts no other
-  parameter versions, so `parameterRef('vpcId', { version: 0 })` throws.
+- **`version` must be a positive integer.** `parameterRef('vpcId', { version: 0 })` throws.
+  Parameter Store keeps only the 100 most recent versions of a parameter, but version
+  numbers keep increasing, so a parameter that has been updated 150 times has a valid
+  version 150.
 - **`emitOutputs` writes the value into the template.** Each `CfnOutput` carries the raw
   parameter value, which anyone who can read the stack can see, so leave it off for
-  sensitive values. CloudFormation logical ids cannot contain `-`, so CDK strips it during
-  synthesis and the `'VpcIdParam-output'` construct id is deployed as `VpcIdParamoutput`.
+  sensitive values. The output's construct id is `${id}Output`, so avoid giving another
+  construct in the same scope that id.
 - **`secureParameterRef` requires a `SecureString` parameter.** Plain `String`
-  parameters cannot be read through `ssm-secure`.
-- **Secret names get a random suffix.** CloudFormation appends six characters to every
-  secret name it creates, so a secret cannot be looked up by its exact name from another
-  stack.
+  parameters cannot be read through `ssm-secure`. CloudFormation also cannot create
+  `SecureString` parameters, so they have to exist already, and `ssm-secure` references
+  only work in [supported resource properties](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-ssm-secure-strings.html).
+- **Secrets Manager adds six random characters to the ARN, not the name.** A secret created
+  by `createSecret` has the exact name `prefix/key`, so `secretRef` and `importSecret` find
+  it by name. Do not end a path segment in a hyphen followed by exactly six characters,
+  because Secrets Manager can mistake that for the ARN suffix.
 - **`StringParameterProps` has no `removalPolicy`.** Call
   `parameter.applyRemovalPolicy(...)` on the construct returned by `putParameter`
   instead.
-- **`readPolicyStatements` grants `GetParameter`/`GetParameters` only.** Add
-  `ssm:GetParametersByPath` yourself if you load the whole subtree by path.
-- **ARN patterns are pinned to the `aws` partition.** `parameterArnPattern` and
-  `secretArnPattern` return `arn:aws:...` strings built from the stack's region and account,
-  with no partition lookup, feature flag or partition pseudo parameter involved, so for a
-  stack with an explicit environment they are plain strings that are easy to assert on.
+- **`readPolicyStatements` and `grantRead` grant `GetParameter`/`GetParameters` only,** plus
+  `GetSecretValue` when the registry declares secrets. Add `ssm:GetParametersByPath`
+  yourself if you load the whole subtree by path, and `kms:Decrypt` if the parameters or
+  secrets use a customer managed KMS key.
+- **ARN patterns follow the stack's partition.** They are built with `Stack.formatArn`, so
+  they work in `aws-cn` and `aws-us-gov` too. By default CDK renders the partition as the
+  `AWS::Partition` pseudo parameter; enable the `@aws-cdk/core:enablePartitionLiterals`
+  feature flag if you want a literal for stacks with an explicit region. Assert on
+  `stack.resolve(...)` in tests rather than comparing raw strings.
 - **ESM only.** The package ships ESM and requires Node >= 20.19.0, which is the
   first release where `require(esm)` works without a flag.
+
+## Migrating from 0.1.x
+
+- **Construct ids are used as given.** `putParameter` and `createSecret` used to create the
+  construct as `${id}-param` and `${id}-secret`, and the `emitOutputs` output as
+  `${id}-output`. They now use `id` as is, and the output is `${id}Output`. Parameter and
+  secret names are fixed, so a deployment that renames the construct tries to create a
+  second resource with the same name and fails. To keep a deployed resource, pass the old id
+  yourself, for example `putParameter(this, 'VpcIdParam-param', ...)`. To move to the new
+  ids, use `cdk refactor` or retain and re-import the resources.
+- **`readPolicyStatements` and `grantRead` skip the Secrets Manager statement** when the
+  registry declares no `secrets`.
+- **ARN patterns use the stack's partition** instead of a hardcoded `aws`. Code that
+  compared them to `arn:aws:...` strings should compare against `stack.resolve(...)`.
+- **Parameter versions above 100 are accepted.**
+- **Invalid `parameters` and `secrets` paths throw when the registry is defined,** and
+  `secrets` paths are normalized the same way as `parameters` paths.
 
 ## Development
 

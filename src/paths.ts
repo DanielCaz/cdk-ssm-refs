@@ -38,3 +38,32 @@ export function normalizePrefix(prefix: string): {
 
   return { withSlash: trimmed, withoutSlash: trimmed.slice(1) };
 }
+
+/**
+ * Normalizes the path segment that a registry key maps to.
+ *
+ * Leading, trailing and repeated slashes are dropped, so `'/vpc-id'` and
+ * `'network//vpc-id'` become `'vpc-id'` and `'network/vpc-id'`. Nested
+ * segments such as `'network/vpc-id'` are allowed.
+ *
+ * @throws If `segment` is not a string or contains no path segment at all
+ * (for example `''` or `'/'`).
+ */
+export function normalizeSegment(
+  kind: 'parameter' | 'secret',
+  key: string,
+  segment: unknown,
+): string {
+  const normalized =
+    typeof segment === 'string'
+      ? segment.split('/').filter(Boolean).join('/')
+      : '';
+
+  if (normalized.length === 0) {
+    throw new Error(
+      `[cdk-ssm-refs] ${kind} path for key ${JSON.stringify(key)} must contain at least one path segment, received ${JSON.stringify(segment)}`,
+    );
+  }
+
+  return normalized;
+}
