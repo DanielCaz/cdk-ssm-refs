@@ -1,14 +1,19 @@
-import type { Construct } from 'constructs';
+import { Construct } from 'constructs';
 import * as cdk from 'aws-cdk-lib/core';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as sm from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
-import { normalizePrefix } from './paths.js';
-import type { DynamicRefOptions, ParamRegistryConfig } from './types.js';
+import { normalizePrefix, normalizeSegment } from './paths.js';
+import type {
+  DynamicRefOptions,
+  ParamRegistryConfig,
+  SecretRefOptions,
+} from './types.js';
 
-/** CloudFormation only accepts parameter versions in this range. */
+/** Parameter Store version numbers start at 1 and only ever increase. */
 const MIN_PARAM_VERSION = 1;
-const MAX_PARAM_VERSION = 100;
+
+type Kind = 'parameter' | 'secret';
 
 export class ParamRegistry<
   P extends Record<string, string>,
@@ -23,6 +28,31 @@ export class ParamRegistry<
     this.parameterPath = withSlash;
     this.arnPath = withoutSlash;
     this.emitOutputs = config.emitOutputs ?? false;
+
+    // Fail when the registry is defined rather than on first use. Values are
+    // still read lazily afterwards, so later edits to the mappings are seen.
+    for (const [key, segment] of Object.entries(config.parameters)) {
+      normalizeSegment('parameter', key, segment);
+    }
+    for (const [key, segment] of Object.entries(config.secrets ?? {})) {
+      normalizeSegment('secret', key, segment);
+    }
+  }
+
+  /**
+   * The path under the registry prefix that `key` maps to, normalized.
+   */
+  private segmentFor(kind: Kind, key: PropertyKey): string {
+    const mapping: Record<string, string> =
+      kind === 'parameter'
+        ? this.config.parameters
+        : (this.config.secrets ?? {});
+
+    if (!Object.hasOwn(mapping, key)) {
+      throw new Error(`[cdk-ssm-refs] unknown ${kind} key: ${String(key)}`);
+    }
+
+    return normalizeSegment(kind, String(key), mapping[key as string]);
   }
 
   /**
@@ -30,28 +60,26 @@ export class ParamRegistry<
    * e.g. `/team/my-app/vpc-id`.
    */
   parameterName(key: keyof P): string {
-    const segment = this.config.parameters[key];
+    return `${this.parameterPath}/${this.segmentFor('parameter', key)}`;
+  }
 
-    if (typeof segment !== 'string' || segment.length === 0) {
-      throw new Error(`[cdk-ssm-refs] unknown parameter key: ${String(key)}`);
-    }
-
-    const normalizedSegment = segment.split('/').filter(Boolean).join('/');
-
-    if (normalizedSegment.length === 0) {
-      throw new Error(
-        `[cdk-ssm-refs] parameter path for key ${String(key)} must contain at least one path segment`,
-      );
-    }
-
-    return `${this.parameterPath}/${normalizedSegment}`;
+  /**
+   * The fully qualified Secrets Manager secret name for `key`,
+   * e.g. `/team/my-app/db-password`.
+   */
+  secretName(key: keyof S): string {
+    return `${this.parameterPath}/${this.segmentFor('secret', key)}`;
   }
 
   /**
    * Creates an SSM `StringParameter` for `key` under the registry prefix.
    *
-   * Any other `StringParameterProps` (`description`, `tier`,
-   * `allowedPattern`, `type`, `dataType`, ...) are passed straight through.
+   * `id` is used as the construct id as given. Any other
+   * `StringParameterProps` (`description`, `tier`, `allowedPattern`, `type`,
+   * `dataType`, ...) are passed straight through.
+   *
+   * When `emitOutputs` is enabled, the `CfnOutput` is created next to the
+   * parameter with the construct id `${id}Output`.
    *
    * Note that `StringParameterProps` does not accept a `removalPolicy`; call
    * `parameter.applyRemovalPolicy(...)` on the returned construct instead.
@@ -65,14 +93,14 @@ export class ParamRegistry<
   ): ssm.StringParameter {
     const parameterName = this.parameterName(key);
 
-    const parameter = new ssm.StringParameter(scope, `${id}-param`, {
+    const parameter = new ssm.StringParameter(scope, id, {
       ...props,
       parameterName,
       stringValue: value,
     });
 
     if (this.emitOutputs) {
-      new cdk.CfnOutput(scope, `${id}-output`, {
+      new cdk.CfnOutput(scope, `${id}Output`, {
         value,
         description: parameterName,
       });
@@ -113,12 +141,10 @@ export class ParamRegistry<
 
     if (
       version !== undefined &&
-      (!Number.isInteger(version) ||
-        version < MIN_PARAM_VERSION ||
-        version > MAX_PARAM_VERSION)
+      (!Number.isInteger(version) || version < MIN_PARAM_VERSION)
     ) {
       throw new Error(
-        `[cdk-ssm-refs] version must be an integer between ${MIN_PARAM_VERSION} and ${MAX_PARAM_VERSION}, received ${version}`,
+        `[cdk-ssm-refs] version must be a positive integer, received ${version}`,
       );
     }
 
@@ -130,9 +156,11 @@ export class ParamRegistry<
   /**
    * Creates a Secrets Manager secret for `key` under the registry prefix.
    *
-   * CloudFormation appends a random six character suffix to every secret
-   * name it creates, so the resulting name is not exactly
-   * `prefix/key` and cannot be referenced by name from another stack.
+   * `id` is used as the construct id as given. The secret is created with the
+   * exact name `prefix/key`; Secrets Manager appends six random characters to
+   * the secret's ARN, not to its name, so the secret can still be looked up
+   * by name with {@link ParamRegistry.importSecret} or
+   * {@link ParamRegistry.secretRef}.
    */
   createSecret(
     scope: Construct,
@@ -140,61 +168,143 @@ export class ParamRegistry<
     key: keyof S,
     props: Omit<sm.SecretProps, 'secretName'> = {},
   ): sm.Secret {
-    const segment = this.config.secrets?.[key];
-
-    if (typeof segment !== 'string' || segment.length === 0) {
-      throw new Error(`[cdk-ssm-refs] unknown secret key: ${String(key)}`);
-    }
-
-    return new sm.Secret(scope, `${id}-secret`, {
+    return new sm.Secret(scope, id, {
       ...props,
-      secretName: `${this.parameterPath}/${segment}`,
+      secretName: this.secretName(key),
     });
   }
 
   /**
-   * ARN pattern matching every parameter under the registry prefix, in the
-   * region and account of `stack`.
+   * A reference to the secret's value that CloudFormation resolves at deploy
+   * time, e.g. `{{resolve:secretsmanager:/team/my-app/db-password}}`.
    *
-   * The partition is fixed to `aws`, the US commercial partition, so no
-   * partition lookup, feature flag or pseudo parameter is involved. For a
-   * stack with an explicit environment the result is a plain string with no
-   * tokens in it; an environment agnostic stack still yields the
+   * It returns a `SecretValue`, which secret-aware constructs such as
+   * `rds.Credentials.fromPassword` accept directly and which CDK refuses to
+   * render into plain text properties by accident. The secret must already
+   * exist in the target account and region.
+   *
+   * If you rotate the secret, change at least one other property on the
+   * resource that uses it so CloudFormation reads the new value.
+   */
+  secretRef(key: keyof S, options: SecretRefOptions = {}): cdk.SecretValue {
+    return cdk.SecretValue.secretsManager(this.secretName(key), options);
+  }
+
+  /**
+   * Imports the secret for `key` by name, for example to call `grantRead` on
+   * it or to hand it to a construct that wants an `ISecret`.
+   *
+   * The secret must exist in the target account and region.
+   */
+  importSecret(scope: Construct, id: string, key: keyof S): sm.ISecret {
+    return sm.Secret.fromSecretNameV2(scope, id, this.secretName(key));
+  }
+
+  /**
+   * ARN pattern matching every parameter under the registry prefix, in the
+   * partition, region and account of `stack`.
+   *
+   * For a stack with an explicit environment this is usually a plain string;
+   * an environment agnostic stack yields the `AWS::Partition`,
    * `AWS::Region` and `AWS::AccountId` tokens. The pattern carries no
    * permissions by itself: `readPolicyStatements` attaches read actions to
    * it, and you can reuse it for custom read or write policies.
    */
   parameterArnPattern(stack: cdk.Stack): string {
-    return `arn:aws:ssm:${stack.region}:${stack.account}:parameter/${this.arnPath}/*`;
+    return stack.formatArn({
+      service: 'ssm',
+      resource: 'parameter',
+      resourceName: `${this.arnPath}/*`,
+    });
   }
 
   /**
-   * ARN pattern matching every secret under the registry prefix.
+   * ARN pattern matching every secret under the registry prefix, in the
+   * partition, region and account of `stack`.
    *
    * Secrets Manager separates the name from the resource type with `:`
    * rather than `/`, hence the `secret:` prefix, and the trailing wildcard
-   * covers the suffix CloudFormation appends to each name.
+   * covers the six random characters Secrets Manager appends to every ARN.
    */
   secretArnPattern(stack: cdk.Stack): string {
-    return `arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:${this.parameterPath}/*`;
+    return stack.formatArn({
+      service: 'secretsmanager',
+      resource: 'secret',
+      resourceName: `${this.parameterPath}/*`,
+      arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+    });
+  }
+
+  /** Whether the registry declares at least one secret. */
+  private hasSecrets(): boolean {
+    return Object.keys(this.config.secrets ?? {}).length > 0;
+  }
+
+  private readPermissions(
+    stack: cdk.Stack,
+  ): { actions: string[]; resources: string[] }[] {
+    const permissions = [
+      {
+        actions: ['ssm:GetParameter', 'ssm:GetParameters'],
+        resources: [this.parameterArnPattern(stack)],
+      },
+    ];
+
+    if (this.hasSecrets()) {
+      permissions.push({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [this.secretArnPattern(stack)],
+      });
+    }
+
+    return permissions;
   }
 
   /**
    * Read-only IAM statements scoped to the registry prefix: `ssm:GetParameter`
-   * and `ssm:GetParameters` for the parameters, and
-   * `secretsmanager:GetSecretValue` for the secrets.
+   * and `ssm:GetParameters` for the parameters, plus
+   * `secretsmanager:GetSecretValue` for the secrets when the registry
+   * declares any.
+   *
+   * Customer managed KMS keys need `kms:Decrypt` on top of this, which this
+   * library cannot know about.
    */
   readPolicyStatements(stack: cdk.Stack): iam.PolicyStatement[] {
-    return [
-      new iam.PolicyStatement({
-        actions: ['ssm:GetParameter', 'ssm:GetParameters'],
-        resources: [this.parameterArnPattern(stack)],
-      }),
-      new iam.PolicyStatement({
-        actions: ['secretsmanager:GetSecretValue'],
-        resources: [this.secretArnPattern(stack)],
-      }),
-    ];
+    return this.readPermissions(stack).map(
+      ({ actions, resources }) =>
+        new iam.PolicyStatement({ actions, resources }),
+    );
+  }
+
+  /**
+   * Grants `grantee` the same read-only access as
+   * {@link ParamRegistry.readPolicyStatements}, and returns the resulting
+   * `Grant`.
+   *
+   * The ARNs use the partition, region and account of the stack that
+   * contains `grantee`. If `grantee` is not a construct, pass `stack`
+   * explicitly.
+   */
+  grantRead(grantee: iam.IGrantable, stack?: cdk.Stack): iam.Grant {
+    const targetStack =
+      stack ??
+      (Construct.isConstruct(grantee) ? cdk.Stack.of(grantee) : undefined);
+
+    if (targetStack === undefined) {
+      throw new Error(
+        '[cdk-ssm-refs] grantRead needs a stack when the grantee is not a construct',
+      );
+    }
+
+    return this.readPermissions(targetStack)
+      .map(({ actions, resources }) =>
+        iam.Grant.addToPrincipal({
+          grantee,
+          actions,
+          resourceArns: resources,
+        }),
+      )
+      .reduce((combined, grant) => combined.combine(grant));
   }
 }
 
